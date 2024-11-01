@@ -1,7 +1,7 @@
 
 const body = new FormData();
 
-body.append("params", JSON.stringify(["10"]));
+body.append("params", JSON.stringify(["-10"]));
 
 
 const req = await fetch(

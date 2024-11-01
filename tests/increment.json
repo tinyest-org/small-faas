@@ -1,0 +1,4 @@
+{
+    "path": "incrementer.wasm",
+    "funcName":"increment"
+}
