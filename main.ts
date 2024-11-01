@@ -7,7 +7,6 @@ type Fn = (params: any) => Promise<any>
 
 
 async function loadWasmFunction(
-  fullName: string,
   funcName: string,
   source: Uint8Array,
 ) {
@@ -17,39 +16,86 @@ async function loadWasmFunction(
   return fn;
 }
 
-class Cache {
+interface Provider {
+  get(name: string): Promise<Uint8Array | undefined>;
+}
 
-  private functions: Map<string, Fn> = new Map();
+// TODO: implement the real S3 provider or http provider
 
-  private constructor() {
-
-  }
-
-  public static async new() {
-    const cache = new Cache();
+class TestProvider implements Provider {
+  async get(name: string): Promise<Uint8Array | undefined> {
     const d = await Deno.readFile("incrementer.wasm");
-    const fn = await loadWasmFunction("", "increment", d);
-    cache.functions.set("increment", fn);
-    return cache;
-  }
-
-  get(name: string) {
-    return this.functions.get(name);
+    return d;
   }
 }
 
-const cache = await Cache.new();
+
+class Cache {
+
+  private functions: Map<string, Fn> = new Map();
+  private provider: Provider;
+
+  private constructor(provider: Provider) {
+    this.provider = provider;
+  }
+
+  // deno-lint-ignore require-await
+  public static async new(provider: Provider) {
+    const cache = new Cache(provider);
+    return cache;
+  }
+
+  /**
+   * Function to invalidate a loaded value
+   * @param name name of the function to delete
+   */
+  // deno-lint-ignore require-await
+  async remove(name: string) {
+    this.functions.delete(name);
+  }
+  // deno-lint-ignore require-await
+  async keys() {
+    return [...this.functions.keys()];
+  }
+
+  async get(name: string) {
+    const fn = this.functions.get(name);
+    if (fn) {
+      return fn;
+    }
+    const data = await this.provider.get(name);
+    if (data) {
+      const f = await loadWasmFunction(name, data);
+      if (f) {
+        this.functions.set(name, f);
+        return f;
+      }
+    }
+  }
+}
+const testProvider = new TestProvider();
+const cache = await Cache.new(testProvider);
+
+app.delete("/", async c => {
+  const params: string[] = await c.req.json();
+  await Promise.all(params.map(cache.remove));
+  return c.text("OK");
+});
+
+app.get("/", async c => {
+  return c.json(await cache.keys());
+});
 
 app.post('/:funcName', async (c) => {
   const funcName = c.req.param('funcName');
-
-  const fn = cache.get(funcName);
+  const fn = await cache.get(funcName);
   if (fn === undefined) {
     return c.notFound();
   }
   const form = await c.req.formData();
   const params = JSON.parse(form.get("params")!);
   const spread = Array.isArray(params);
+  console.log(params);
   let result;
   if (spread) {
     // @ts-ignore
@@ -57,7 +103,6 @@ app.post('/:funcName', async (c) => {
   } else {
     result = await fn(params);
   }
-
   return c.json(result);
 });
 
