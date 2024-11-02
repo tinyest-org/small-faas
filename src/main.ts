@@ -1,60 +1,10 @@
 import { Hono } from 'hono';
-import { Fn, loadWasmFunction } from "./utils.ts";
-import { S3Client } from "https://deno.land/x/s3_lite_client@0.7.0/mod.ts";
+import { Fn, getParams, loadWasmFunction } from "./utils.ts";
+import { Provider, S3Provider } from "./provider.ts";
 
 const app = new Hono();
 
-type Manifest = {
-  path: string;
-  funcName: string;
-}
-
-interface Provider {
-  get(name: string): Promise<{ data: Uint8Array, name: string } | undefined>;
-}
-
-// TODO: implement the real S3 provider or http provider
-
-class TestProvider implements Provider {
-  async get(_: string): Promise<{ data: Uint8Array, name: string } | undefined> {
-    const manifest = await Deno.readTextFile("tests/manifest.json");
-    const d = await Deno.readFile("tests/incrementer.wasm");
-    return {
-      name: "increment",
-      data: d,
-    };
-  }
-}
-
-class S3Provider implements Provider {
-  private client: S3Client;
-  constructor(endpoint: string, bucket: string, id: string, secret: string) {
-    const client = new S3Client({
-      endPoint: endpoint,
-      port: 443,
-      useSSL: true,
-      region: "us-east-1",
-      bucket,
-      pathStyle: true,
-      accessKey: id,
-      secretKey: secret,
-    });
-    this.client = client;
-  }
-  async get(name: string): Promise<{ data: Uint8Array, name: string } | undefined> {
-    const reqManifest = await this.client.getObject(`${name}.json`);
-    const manifest: Manifest = await reqManifest.json();
-    const req = await this.client.getObject(manifest.path);
-    const content = await req.bytes();
-    return {
-      data: content,
-      name: manifest.funcName,
-    };
-  }
-}
-
-
-class Cache {
+class Executor {
 
   private functions: Map<string, Fn> = new Map();
   private provider: Provider;
@@ -65,7 +15,7 @@ class Cache {
 
   // deno-lint-ignore require-await
   public static async new(provider: Provider) {
-    const cache = new Cache(provider);
+    const cache = new Executor(provider);
     return cache;
   }
 
@@ -112,30 +62,32 @@ const provider = new S3Provider(
   Deno.env.get("SECRET")!,
 );
 
-const cache = await Cache.new(provider);
+const executor = await Executor.new(provider);
 
 app.delete("/", async c => {
   const params: string[] = await c.req.json();
-  await Promise.all(params.map(cache.remove));
+  await Promise.all(params.map(executor.remove));
   return c.text("OK");
 });
 
 app.get("/", async c => {
-  return c.json(await cache.keys());
+  return c.json(await executor.keys());
 });
+
+
 
 app.post('/:funcName', async (c) => {
   const funcName = c.req.param('funcName');
-  const fn = await cache.get(funcName);
+  const fn = await executor.get(funcName);
   if (fn === undefined) {
     return c.notFound();
   }
   const form = await c.req.formData();
-  const params = JSON.parse(form.get("params")!);
+  const params = getParams(form);
   const spread = Array.isArray(params);
   let result;
   if (spread) {
-    // @ts-ignore
+    // @ts-ignore, hard to properly type this for now
     result = await fn(...params);
   } else {
     result = await fn(params);
