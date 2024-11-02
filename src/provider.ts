@@ -1,4 +1,5 @@
 import { S3Client } from "https://deno.land/x/s3_lite_client@0.7.0/mod.ts";
+import * as path from "jsr:@std/path";
 
 export interface Provider {
     get(name: string): Promise<{ data: Uint8Array, name: string } | undefined>;
@@ -40,7 +41,9 @@ export class S3Provider implements Provider {
     async get(name: string): Promise<{ data: Uint8Array, name: string } | undefined> {
         const reqManifest = await this.client.getObject(`${name}.json`);
         const manifest: Manifest = await reqManifest.json();
-        const req = await this.client.getObject(manifest.path);
+        const p = path.join(path.dirname(name), manifest.path);
+        console.log('Loading wasm at', p);
+        const req = await this.client.getObject(p);
         const content = await req.bytes();
         return {
             data: content,

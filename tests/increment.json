@@ -1,4 +1,4 @@
 {
-    "path": "incrementer.wasm",
+    "path": "./incrementer.wasm",
     "funcName":"increment"
 }
